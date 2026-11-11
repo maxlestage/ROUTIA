@@ -1,0 +1,74 @@
+[package]
+name = "routia-site"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+description = "Routia : le site de présentation et le tracker d'habitudes (PWA), écrits en Rust avec Paquets."
+
+[workspace]
+
+# La bibliothèque contient ce que le serveur et le navigateur partagent (logique des
+# habitudes, îlots) et, compilée en WebAssembly, le bundle du navigateur.
+[lib]
+name = "routia_site"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "routia-site"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+paquets = { git = "https://github.com/maxlestage/Paquets" }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+paquets = { git = "https://github.com/maxlestage/Paquets", default-features = false, features = ["client"] }
+wasm-bindgen = "=0.2.130"
+js-sys = "0.3.107"
+web-sys = { version = "0.3.107", features = [
+  "AddEventListenerOptions",
+  "Blob",
+  "BlobPropertyBag",
+  "CanvasGradient",
+  "CanvasRenderingContext2d",
+  "TextMetrics",
+  "Clipboard",
+  "CssStyleDeclaration",
+  "Document",
+  "DomRect",
+  "DomTokenList",
+  "Element",
+  "EventTarget",
+  "HtmlAnchorElement",
+  "HtmlCanvasElement",
+  "HtmlElement",
+  "IntersectionObserver",
+  "IntersectionObserverEntry",
+  "IntersectionObserverInit",
+  "MediaQueryList",
+  "Navigator",
+  "NodeList",
+  "PointerEvent",
+  "Storage",
+  "Url",
+  "Window",
+] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# Le bundle du navigateur :
+# cargo build --lib --target wasm32-unknown-unknown --profile wasm-release
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = false

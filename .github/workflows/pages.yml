@@ -1,0 +1,64 @@
+# Déploie le site sur GitHub Pages : le serveur Paquets écrit chaque page en fichiers
+# statiques (`routia-site export`), sous le chemin du dépôt (/ROUTIA).
+#
+# Lancé par un push sur master, par la CI après la fusion automatique, ou à la main
+# (onglet Actions). Réglage requis, une fois : Settings → Pages → Source : GitHub Actions.
+
+name: GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Construire le site statique
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v7
+      - id: pages
+        uses: actions/configure-pages@v6
+      - name: Rust stable, cible wasm32
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: site
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.130
+      - name: Bundle et serveur
+        run: ./build.sh
+      - name: Export statique
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
+        run: ./target/release/routia-site export dist
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist
+
+  deploy:
+    name: Publier
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,134 @@
+# Vérifie chaque push, puis fusionne automatiquement la branche dans master quand tout
+# est vert, et lance le déploiement sur GitHub Pages.
+#
+# - site : le site en Rust (format, clippy, tests, bundle WebAssembly), puis Chromium
+#   vérifie chaque page de 320 à 1440 px (aucun défilement horizontal, aucune ressource
+#   manquante, aucune erreur), sur le serveur et sur l'export statique sous /ROUTIA ;
+# - ios-core : la logique iOS (RoutiaCore), `swift test` sous Linux ;
+# - ios-app : l'app iOS, compilée avec Xcode 27.2 (SDK iOS 27) ;
+# - merge : quand tout est vert, la branche est fusionnée dans master (sauf master et
+#   les branches wip/...), puis le déploiement est lancé : un push fait avec GITHUB_TOKEN
+#   ne démarre aucun autre workflow, il est donc démarré explicitement.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  site:
+    name: Site (Rust + Paquets)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust stable, cible wasm32
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt --target wasm32-unknown-unknown
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: site
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --lib --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo test
+      - name: wasm-bindgen (la version de Cargo.toml)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.130
+      - name: Bundle et serveur
+        run: ./build.sh
+      - name: Export statique (comme GitHub Pages, sous /ROUTIA)
+        run: BASE_PATH=/ROUTIA SITE_URL=https://example.com/ROUTIA ./target/release/routia-site export dist
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Chromium
+        run: |
+          npm install --no-save playwright@1.65.0
+          npx playwright install --with-deps chromium
+      - name: Aucun débordement horizontal, aucune erreur (serveur et export)
+        run: |
+          PORT=4100 ./target/release/routia-site &
+          mkdir -p ../pages-root && ln -s "$PWD/dist" ../pages-root/ROUTIA
+          (cd ../pages-root && python3 -m http.server 4200 &)
+          sleep 3
+          node e2e/overflow.mjs http://localhost:4100
+          node e2e/overflow.mjs http://localhost:4200/ROUTIA
+
+  ios-core:
+    name: RoutiaCore (swift test, Linux)
+    runs-on: ubuntu-24.04
+    container: swift:6.4-bookworm
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift test
+        working-directory: ios/RoutiaCore
+
+  ios-app:
+    name: App iOS (Xcode 27.2)
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Xcode 27.2
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app
+          xcodebuild -version
+      - run: brew install xcodegen
+      - run: xcodegen generate
+        working-directory: ios
+      - name: Compiler pour le simulateur
+        working-directory: ios
+        run: |
+          xcodebuild -project Routia.xcodeproj -scheme Routia \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+      - run: swift test
+        working-directory: ios/RoutiaCore
+
+  merge:
+    name: Fusion dans master
+    needs: [site, ios-core, ios-app]
+    if: >-
+      github.event_name == 'push' && github.ref_name != 'master' &&
+      !startsWith(github.ref_name, 'wip/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    concurrency:
+      group: merge-into-master
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Fusionner ${{ github.ref_name }}
+        env:
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge-base --is-ancestor "$SHA" HEAD; then
+            echo "$BRANCH est déjà dans master."
+            exit 0
+          fi
+          git merge --no-ff --no-edit "$SHA" -m "Fusion de '$BRANCH' dans master (automatique)"
+          git push origin HEAD:master
+          echo "::notice title=Fusion automatique::$BRANCH fusionnée dans master"
+      - name: Déployer master sur GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref master --repo "$GITHUB_REPOSITORY"
