@@ -44,7 +44,9 @@ final class HabitRecord {
     var color: Color { Palette.color(colorIndex) }
 }
 
-enum Palette {
+/// Les couleurs de Routia. Des fonctions pures, utilisables hors de l'acteur principal
+/// (le modèle SwiftData s'en sert).
+nonisolated enum Palette {
     static let hex: [UInt32] = [0x7C5CFF, 0x22D3EE, 0x34D399, 0xFBBF24, 0xF472B6, 0xFB7185]
 
     static func color(_ index: Int) -> Color {
@@ -56,10 +58,13 @@ enum Palette {
         )
     }
 
-    static let background = Color(red: 11 / 255, green: 8 / 255, blue: 32 / 255)
-    static let gradient = LinearGradient(
-        colors: [color(0), color(1), color(4)],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    static var background: Color { Color(red: 11 / 255, green: 8 / 255, blue: 32 / 255) }
+
+    static var gradient: LinearGradient {
+        LinearGradient(
+            colors: [color(0), color(1), color(4)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 }
